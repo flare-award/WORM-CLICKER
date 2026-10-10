@@ -5,6 +5,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  PYTHONIOENCODING: utf-8
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -12,6 +15,9 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.11", "3.12"]
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,24 +30,35 @@ jobs:
       - name: Lint
         run: ruff check wormclicker tests
       - name: Tests (incl. Windows API, Tk UI smoke test)
-        run: python -m pytest -v
+        run: |
+          python -m pytest -v -rs 2>&1 | Tee-Object -FilePath pytest.txt
+          $code = $LASTEXITCODE
+          $lines = Get-Content pytest.txt | Where-Object { $_ -match 'FAILED|ERROR|SKIPPED|passed|failed|Error' }
+          $msg = ($lines | Select-Object -Last 40) -join '%0A'
+          Write-Output "::notice title=pytest (Python ${{ matrix.python }})::$msg"
+          exit $code
       - name: Benchmark (no real clicks)
-        run: python run_wormclicker.py --benchmark
+        run: |
+          python run_wormclicker.py --benchmark 2>&1 | Tee-Object -FilePath bench.txt
+          $code = $LASTEXITCODE
+          $msg = (Get-Content bench.txt | Select-Object -Last 25) -join '%0A'
+          Write-Output "::notice title=benchmark (Python ${{ matrix.python }})::$msg"
+          exit $code
       - name: Build exe
         if: matrix.python == '3.12'
         run: |
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name WormClicker --collect-submodules dxcam run_wormclicker.py
-          copy config.default.json dist\
-          xcopy /e /i /y practice dist\practice
-        shell: cmd
+          Copy-Item config.default.json dist/
+          Copy-Item -Recurse practice dist/practice
       - name: Smoke-test exe starts
         if: matrix.python == '3.12'
-        shell: pwsh
         run: |
           $p = Start-Process -FilePath dist\WormClicker.exe -ArgumentList "--dry-run" -PassThru
-          Start-Sleep -Seconds 8
-          if ($p.HasExited) { throw "WormClicker.exe exited early with code $($p.ExitCode)" }
+          Start-Sleep -Seconds 10
+          if ($p.HasExited) { Write-Output "::error::WormClicker.exe exited early, code $($p.ExitCode)"; exit 1 }
           Stop-Process -Id $p.Id -Force
+          $size = [math]::Round((Get-Item dist\WormClicker.exe).Length / 1MB, 1)
+          Write-Output "::notice title=exe::WormClicker.exe started and kept running for 10 s (size $size MB)"
       - uses: actions/upload-artifact@v4
         if: matrix.python == '3.12'
         with:

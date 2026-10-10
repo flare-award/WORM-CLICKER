@@ -103,6 +103,13 @@ def bench_e2e(seconds: float = 3.0) -> list[str]:
 
 
 def run_benchmark() -> int:
+    import sys
+
+    for stream in (sys.stdout, sys.stderr):
+        try:  # redirected output on Windows defaults to cp1252/cp866
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     print("Worm Clicker — замеры производительности (реальные клики не отправляются)\n")
     for section in (bench_detector, bench_capture, bench_e2e):
         for line in section():

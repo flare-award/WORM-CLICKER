@@ -49,9 +49,14 @@ jobs:
           $msg = (Get-Content bench.txt | Select-Object -Last 25) -join '%0A'
           Write-Output "::notice title=benchmark (Python ${{ matrix.python }})::$msg"
           exit $code
-      - name: UI screenshot (simulated game)
-        if: matrix.python == '3.12'
+      - name: UI screenshots (simulated game)
         run: python tools/ui_screenshot.py
+        env:
+          SHOTS: ${{ matrix.python == '3.12' && 'idle,running' || 'target-tab,capture-tab' }}
+      - name: Shot 1
+        run: python tools/ui_screenshot.py --emit ${{ matrix.python == '3.12' && 'idle' || 'target-tab' }}
+      - name: Shot 2
+        run: python tools/ui_screenshot.py --emit ${{ matrix.python == '3.12' && 'running' || 'capture-tab' }}
       - name: Build exe
         if: matrix.python == '3.12'
         run: |

@@ -19,19 +19,34 @@ os.environ["WORMCLICKER_ALLOW_CAPTURE"] = "1"          # let mss see our own win
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
-CHUNK = int(os.environ.get("SHOT_CHUNK", "60000"))
+CHUNK = 4000            # GitHub cuts annotation messages at 4096 characters
+MAX_CHARS = 20 * CHUNK  # 10 notices + 10 warnings per step (GitHub limit)
+OUT = Path(os.environ.get("RUNNER_TEMP") or os.environ.get("TEMP") or "/tmp") / "wc_shots"
+SHOTS = os.environ.get("SHOTS", "idle,running,target-tab,capture-tab").split(",")
 
 
-def emit(name: str, bgr: np.ndarray, width: int) -> None:
+def save(name: str, bgr: np.ndarray) -> None:
+    """Encode so that the base64 text fits into the annotation budget of one CI step."""
+    width = int(os.environ.get("SHOT_WIDTH", "1100"))
     h, w = bgr.shape[:2]
     if w > width:
         bgr = cv2.resize(bgr, (width, int(h * width / w)), interpolation=cv2.INTER_AREA)
-    ok, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
-    data = base64.b64encode(buf.tobytes()).decode()
+    for q in (85, 75, 65, 55, 45, 35):
+        ok, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, q])
+        if len(base64.b64encode(buf.tobytes())) <= MAX_CHARS:
+            break
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / f"{name}.jpg").write_bytes(buf.tobytes())
+    report(f"{name}: {w}x{h}, jpeg q={q}, {len(buf)} bytes", "notice")
+
+
+def emit(name: str) -> None:
+    data = base64.b64encode((OUT / f"{name}.jpg").read_bytes()).decode()
     parts = [data[i:i + CHUNK] for i in range(0, len(data), CHUNK)]
     digest = hashlib.sha1(data.encode()).hexdigest()[:10]
     for i, p in enumerate(parts):
-        print(f"::notice title=shot {name} {i + 1}/{len(parts)} {digest}::{p}", flush=True)
+        level = "notice" if i < 10 else "warning"
+        print(f"::{level} title=shot {name} {i + 1}/{len(parts)} {digest}::{p}", flush=True)
 
 
 def main() -> int:
@@ -52,7 +67,6 @@ def main() -> int:
     eng, game, cap, mouse = build(preview=True)
     app = App(root, eng, HotkeyManager(lambda a: None), eng.cfg)
     root.attributes("-topmost", True)
-    width = int(os.environ.get("SHOT_WIDTH", "1100"))
     report(f"scale={Scale.k:.2f} screen={root.winfo_screenwidth()}x{root.winfo_screenheight()}", "notice")
 
     def pump(seconds: float) -> None:
@@ -69,7 +83,8 @@ def main() -> int:
         x, y = root.winfo_rootx(), root.winfo_rooty()
         w, h = root.winfo_width(), root.winfo_height()
         raw = np.asarray(grabber.grab({"left": x, "top": y, "width": w, "height": h}))
-        emit(name, cv2.cvtColor(raw, cv2.COLOR_BGRA2BGR), width)
+        if name in SHOTS:
+            save(name, cv2.cvtColor(raw, cv2.COLOR_BGRA2BGR))
 
     try:
         pump(2.0)
@@ -106,6 +121,9 @@ if __name__ == "__main__":
     import traceback
 
     try:
+        if len(sys.argv) == 3 and sys.argv[1] == "--emit":
+            emit(sys.argv[2])
+            raise SystemExit(0)
         raise SystemExit(main())
     except SystemExit:
         raise

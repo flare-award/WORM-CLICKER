@@ -12,7 +12,8 @@ def test_format_stats_hits_are_marked_approximate():
     s = StatsSnapshot(clicks=10, jumps=9, cps=12.34, session_s=75)
     out = format_stats(s)
     assert out["clicks"] == "10"
-    assert out["jumps"] == "9 · 90%"
+    assert out["jumps"] == "9"
+    assert "≈ попаданий 90% кликов" in out["detail"]
     assert out["cps"] == "12"
     assert out["session"] == "1:15"
     assert format_stats(StatsSnapshot())["jumps"] == "0"
@@ -50,6 +51,11 @@ def test_ui_smoke(tmp_path, monkeypatch):
     try:
         pump(0.6)
         assert app._df is not None and app._img_geom[2] > 0          # preview shows frames
+        # the Tk image really has the frame's size (a fixed-size PhotoImage would crop it)
+        assert app._photo.width() == app._img_geom[2] and app._photo.height() == app._img_geom[3]
+        px_ = app._photo.get(app._img_geom[2] // 2, app._img_geom[3] // 2)
+        rgb = tuple(int(v) for v in (px_.split() if isinstance(px_, str) else px_))
+        assert rgb != (0, 0, 0)
         for tab in ("target", "capture", "keys", "clicks"):
             app._show_tab(tab)
             pump(0.05)

@@ -272,6 +272,8 @@ class App:
 
     # ---------------------------------------------------------------- tabs
     def _show_tab(self, key: str) -> None:
+        if self.tab_var.get() != key:
+            self.tab_var.set(key)             # keeps the switcher highlight in sync
         for k, f in self.tabs.items():
             if k == key:
                 f.grid(row=0, column=0, sticky="ew")
@@ -424,7 +426,9 @@ class App:
         self.cv = tk.Canvas(c, bg=PREVIEW_BG, highlightthickness=1, highlightbackground=BORDER, bd=0,
                             cursor="crosshair")
         self.cv.grid(row=1, column=0, sticky="nsew")
-        self._photo = tk.PhotoImage(master=self.root, width=1, height=1)
+        # NB: no width/height here - an explicit size would freeze the image at that size
+        # and the loaded frames would be cropped to it (that was a 1x1 black preview).
+        self._photo = tk.PhotoImage(master=self.root)
         self._img_item = self.cv.create_image(0, 0, image=self._photo, anchor="nw", state="hidden")
         self._ph_text = self.cv.create_text(0, 0, text="", fill=MUTED, font=self.f_body, justify="center")
         self._hud_bg = self.cv.create_polygon(0, 0, 0, 0, fill="", outline="")

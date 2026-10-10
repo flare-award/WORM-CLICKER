@@ -12,18 +12,18 @@ def format_stats(s: StatsSnapshot) -> dict[str, str]:
     def ms(v: float) -> str:
         return f"{v:.1f}" if v > 0 else "—"
 
-    rate = f" · {100.0 * s.jumps / s.clicks:.0f}%" if s.clicks else ""
+    rate = f" · ≈ попаданий {100.0 * s.jumps / s.clicks:.0f}% кликов" if s.clicks else ""
     session = f"{int(s.session_s // 60)}:{int(s.session_s % 60):02d}"
     return {
         "cps": f"{s.cps:.0f}",
         "jumps_ps": f"{s.jumps_ps:.0f}",
         "fps": f"{s.fps:.0f}",
         "clicks": str(s.clicks),
-        "jumps": f"{s.jumps}{rate}",
+        "jumps": str(s.jumps),
         "pipeline_ms": ms(s.pipeline_ms),
         "session": session,
         "detail": (f"захват {ms(s.capture_ms)} мс · анализ {ms(s.detect_ms)} мс · потерь цели {s.lost}"
-                   f" · не-целей {s.ignored} · сессия {session}"),
+                   f" · не-целей {s.ignored} · сессия {session}{rate}"),
     }
 
 

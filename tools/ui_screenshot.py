@@ -53,7 +53,7 @@ def main() -> int:
     app = App(root, eng, HotkeyManager(lambda a: None), eng.cfg)
     root.attributes("-topmost", True)
     width = int(os.environ.get("SHOT_WIDTH", "1100"))
-    print(f"scale={Scale.factor:.2f} screen={root.winfo_screenwidth()}x{root.winfo_screenheight()}", flush=True)
+    report(f"scale={Scale.k:.2f} screen={root.winfo_screenwidth()}x{root.winfo_screenheight()}", "notice")
 
     def pump(seconds: float) -> None:
         end = time.perf_counter() + seconds
@@ -75,14 +75,14 @@ def main() -> int:
         pump(2.0)
         n0 = eng.preview_frames
         pump(1.0)
-        print(f"preview frames/s (engine) = {eng.preview_frames - n0}", flush=True)
+        report(f"preview frames/s (engine) = {eng.preview_frames - n0}", "notice")
         shot("idle")
         app._toggle()
         pump(0.5)
         game.kick()
         pump(2.0)
         s = eng.stats.snapshot()
-        print(f"clicking: clicks={s.clicks} hits={game.hits} decoy={game.decoy_clicks} cps={s.cps:.0f}", flush=True)
+        report(f"clicking: clicks={s.clicks} hits={game.hits} decoy={game.decoy_clicks} cps={s.cps:.0f}", "notice")
         shot("running")
         app._show_tab("target")
         pump(0.4)
@@ -97,5 +97,18 @@ def main() -> int:
     return 0
 
 
+def report(text: str, level: str = "error") -> None:
+    msg = text.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+    print(f"::{level} title=ui_screenshot::{msg}", flush=True)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    import traceback
+
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except BaseException:
+        report(traceback.format_exc()[-6000:])
+        raise SystemExit(1) from None

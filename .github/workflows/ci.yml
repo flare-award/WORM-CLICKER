@@ -33,12 +33,12 @@ jobs:
         run: |
           python -m pytest -v -rs --tb=short 2>&1 | Tee-Object -FilePath pytest.txt
           $code = $LASTEXITCODE
-          $summary = Get-Content pytest.txt | Where-Object { $_ -match 'SKIPPED|FAILED|ERROR|passed|failed' -and $_ -notmatch ' PASSED ' }
-          $msg = ($summary | Select-Object -Last 30) -join '%0A'
+          $summary = Get-Content pytest.txt | Where-Object { $_ -match '^(SKIPPED|FAILED|ERROR) |=+ .*(passed|failed)' }
+          $msg = (($summary | Select-Object -Last 30) -join '%0A') -replace '::', ': '
           Write-Output "::notice title=pytest (Python ${{ matrix.python }})::$msg"
           if ($code -ne 0) {
             $tb = Get-Content pytest.txt | Where-Object { $_ -match '^E |\.py:\d+: in |^_{5,}' }
-            $tbmsg = ($tb | Select-Object -First 60) -join '%0A'
+            $tbmsg = (($tb | Select-Object -First 60) -join '%0A') -replace '::', ': '
             Write-Output "::error title=pytest tracebacks (Python ${{ matrix.python }})::$tbmsg"
           }
           exit $code

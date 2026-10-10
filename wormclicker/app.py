@@ -79,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         cfg.dry_run = True
 
+    winapi.set_timer_resolution(True)     # smooth preview, precise click intervals
     engine = AutomationEngine(cfg)
     holder: dict[str, App] = {}
     hotkeys = create_hotkey_manager(lambda action: holder["app"].handle_action(action) if "app" in holder else None)
@@ -90,4 +91,5 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         engine.shutdown()
         hotkeys.stop()
+        winapi.set_timer_resolution(False)
     return 0

@@ -1,8 +1,9 @@
 """Performance measurements: ``python -m wormclicker --benchmark``.
 
-1. Detector speed on synthetic 1080p frames (CPU only).
+1. Target finder speed on synthetic 1080p / 720p frames (CPU only): the
+   worm jumps between frames, static decoys and page elements are present.
 2. Real screen capture speed of the available backends (Windows / X11).
-3. End-to-end offline loop with the simulator (capture -> detect -> click),
+3. End-to-end offline loop with the simulator (capture -> find -> click),
    both with an instant game and with 30 ms render latency.
 
 Nothing is clicked on the real screen.
@@ -21,24 +22,35 @@ def _ms(samples: list[float]) -> str:
 
 
 def bench_detector(n: int = 60) -> list[str]:
-    from .detector import WormDetector
-    from .synthetic import scene
+    from .sprite import render_worm
+    from .synthetic import scene_with_distractors
+    from .target import TargetFinder
 
     out = []
-    det = WormDetector()
     for res in ((1920, 1080), (1280, 720)):
-        frames = [scene(res[0], res[1], worm_center=(300 + 37 * i % (res[0] - 600), 300 + 13 * i % (res[1] - 500)),
-                        angle=17.0 * i, pixel_size=4, seed=i)[0] for i in range(8)]
-        for i in range(3):
-            det.detect(frames[i])
-        t = []
-        found = 0
+        w, h = res
+        bg = scene_with_distractors(w, h, 0)
+        render_worm(bg, (w * 0.85, h * 0.85), 25.0, 4)            # static decoy worm
+        rng = np.random.default_rng(1)
+        frames, masks = [], []
+        for _ in range(8):
+            f = bg.copy()
+            masks.append(render_worm(f, (float(rng.uniform(80, w * 0.7)), float(rng.uniform(280, h - 80))),
+                                     float(rng.uniform(0, 360)), 4))
+            frames.append(f)
+        tf = TargetFinder()
+        now = 0.0
+        tf.process(bg, now)
+        t, found = [], 0
         for i in range(n):
+            now += 0.016
+            k = i % len(frames)
             t0 = time.perf_counter()
-            d = det.detect(frames[i % len(frames)])
+            r = tf.process(frames[k], now)
             t.append(time.perf_counter() - t0)
-            found += d.best is not None
-        out.append(f"детектор {res[0]}x{res[1]}: {_ms(t)}, найден в {found}/{n} кадров")
+            if r.target is not None and masks[k][int(r.target.click[1]), int(r.target.click[0])]:
+                found += 1
+        out.append(f"поиск цели {w}x{h}: {_ms(t)}, попадание точкой клика в червя {found}/{n} кадров")
     return out
 
 
@@ -83,22 +95,28 @@ def bench_e2e(seconds: float = 3.0) -> list[str]:
     from .simulator import SimCapture, SimMouse, SimulatedGame
 
     out = []
-    for latency in (0.0, 0.03):
-        game = SimulatedGame(1600, 900, render_latency_s=latency, seed=1)
+    for latency, interval in ((0.0, 0.0), (0.03, 0.0), (0.0, 20.0)):
+        game = SimulatedGame(1600, 900, render_latency_s=latency, seed=1, decoy=True)
         mons = [Rect(0, 0, 1600, 900)]
         cap = SimCapture(game, (0, 0), monitors=mons)
-        eng = AutomationEngine(AppConfig(capture_area="monitor:0"), capture_factory=lambda c=cap: c,
+        cfg = AppConfig(capture_area="monitor:0", click_interval_ms=interval, debug_view=False)
+        eng = AutomationEngine(cfg, capture_factory=lambda c=cap: c,
                                mouse_factory=lambda dry, g=game: SimMouse(g),
                                region_provider=RegionProvider("monitor:0", lambda m=mons: m))
         eng.start()
+        time.sleep(0.2)
+        game.kick()                       # the user's first click on the worm
+        t0 = time.perf_counter()
         time.sleep(seconds)
         eng.stop()
+        dt = time.perf_counter() - t0
         s = eng.stats.snapshot()
         eng.shutdown()
-        acc = 100.0 * game.hits / max(1, game.hits + game.misses)
-        out.append(f"симулятор (задержка отрисовки {latency * 1000:.0f} мс): {game.hits / seconds:.1f} попаданий/с, "
-                   f"точность {acc:.1f}%, клики по старой позиции: {game.clicks_on_old_spot}, "
-                   f"детекция {s.detect_ms:.1f} мс, кадр→клик {s.pipeline_ms:.1f} мс")
+        mode = "максимум" if interval == 0 else f"интервал {interval:.0f} мс"
+        out.append(f"симулятор ({mode}, задержка отрисовки {latency * 1000:.0f} мс): "
+                   f"{game.hits / dt:.1f} попаданий/с, {s.clicks / dt:.1f} кликов/с, "
+                   f"клики по статичной копии червя: {game.decoy_clicks}, "
+                   f"анализ кадра {s.detect_ms:.1f} мс, кадр→клик {s.pipeline_ms:.1f} мс")
     return out
 
 

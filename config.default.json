@@ -1,4 +1,5 @@
 {
+  "config_version": 2,
   "hotkey_toggle": "F6",
   "hotkey_stop": "F7",
   "hotkey_calibrate": "F8",
@@ -6,7 +7,9 @@
   "capture_backend": "auto",
   "require_focus": true,
   "dry_run": false,
-  "debug_view": false,
+  "click_interval_ms": 0.0,
+  "debug_view": true,
+  "preview_fps": 60,
   "idle_sleep_ms": 2.0,
   "detector": {
     "hue_ranges": [
@@ -33,12 +36,14 @@
     "downscale": 2,
     "max_candidates": 12
   },
-  "tracker": {
-    "stale_timeout_ms": 250.0,
+  "target": {
+    "mode": "motion",
+    "fresh_window_ms": 400.0,
+    "min_fresh": 0.5,
+    "min_similarity": 0.45,
+    "sample_similarity": 0.6,
+    "max_target_area": 30000,
     "lost_timeout_ms": 300.0,
-    "stable_frames": 1,
-    "max_cps": 0.0,
-    "blacklist_after": 4,
-    "blacklist_ttl_s": 15.0
+    "unlock_after_ms": 1500.0
   }
 }

@@ -53,27 +53,24 @@ class RateMeter:
 class StatsSnapshot:
     session_s: float = 0.0
     clicks: int = 0
-    jumps: int = 0                 # confirmed jumps after a click (~ hits)
-    no_jump: int = 0               # clicks after which the worm did not move
+    jumps: int = 0                 # target jumped after being clicked (~ hits)
     cps: float = 0.0
     jumps_ps: float = 0.0
     avg_cps: float = 0.0
     fps: float = 0.0
     frames: int = 0
-    stale_frames: int = 0
     no_new_frame: int = 0
     no_target_frames: int = 0
     capture_ms: float = 0.0
     detect_ms: float = 0.0
     click_ms: float = 0.0
     pipeline_ms: float = 0.0       # frame grab start -> click sent
-    jump_ms: float = 0.0           # click -> new position detected
+    jump_ms: float = 0.0           # first click on a position -> new position seen
     lost: int = 0
     reacquired: int = 0
     reacquire_ms: float = 0.0
-    blacklisted: int = 0
+    ignored: int = 0               # objects ignored because they did not react to clicks
     errors: int = 0
-    last_score: float = 0.0
     extra: dict = field(default_factory=dict)
 
 
@@ -86,7 +83,7 @@ class Stats:
     def reset(self) -> None:
         with self._lock:
             self._start = None
-            self._clicks = RateMeter()
+            self._clicks = RateMeter(maxlen=20000)
             self._jumps = RateMeter()
             self._frames = RateMeter()
             self.s = StatsSnapshot()
@@ -116,14 +113,13 @@ class Stats:
             if not found:
                 self.s.no_target_frames += 1
 
-    def click(self, click_ms: float, pipeline_ms: float, score: float) -> None:
+    def click(self, click_ms: float, pipeline_ms: float) -> None:
         now = self._clock()
         with self._lock:
             self.s.clicks += 1
             self._clicks.add(now)
             self._clk.add(click_ms)
             self._pipe.add(pipeline_ms)
-            self.s.last_score = score
 
     def jump(self, jump_ms: float) -> None:
         now = self._clock()

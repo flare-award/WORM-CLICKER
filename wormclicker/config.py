@@ -43,27 +43,36 @@ class DetectorConfig:
 
 
 @dataclass
-class TrackerConfig:
-    # After a click the worm must disappear from that spot. While it is still
-    # visible there the frame is considered stale and no click is sent.
-    stale_timeout_ms: float = 250.0
-    # Target counted as "lost" after this time without a confident detection.
+class TargetConfig:
+    # "motion": the target is the first small pink object that MOVES (static
+    #           page elements are never targets); "sample": the object the
+    #           user outlined on the preview / captured with F8.
+    mode: str = "motion"
+    # a pixel counts as "recently changed" for this long
+    fresh_window_ms: float = 400.0
+    # share of recently changed pixels needed to call an object "moving"
+    min_fresh: float = 0.5
+    # appearance similarity needed to re-acquire the learned target
+    min_similarity: float = 0.45
+    sample_similarity: float = 0.6
+    # biggest object (screen px) that may become a target ("small" object)
+    max_target_area: int = 30000
+    # target counted as lost after this time without seeing it
     lost_timeout_ms: float = 300.0
-    # Number of consecutive frames with a stable detection before clicking.
-    stable_frames: int = 1
-    # 0 = unlimited. Optional safety cap of clicks per second.
-    max_cps: float = 0.0
-    # A candidate clicked this many times without a jump is ignored for a while
-    # (static picture of a worm in the page UI, etc.).
-    blacklist_after: int = 4
-    blacklist_ttl_s: float = 15.0
+    # target that does not react to clicks for this long is ignored for a
+    # few seconds (it is not the worm). 0 = never. Disabled in test mode.
+    unlock_after_ms: float = 1500.0
+
+
+CONFIG_VERSION = 2
 
 
 @dataclass
 class AppConfig:
+    config_version: int = CONFIG_VERSION
     hotkey_toggle: str = "F6"
     hotkey_stop: str = "F7"
-    hotkey_calibrate: str = "F8"
+    hotkey_calibrate: str = "F8"          # capture the target under the cursor
     # "window" = foreground browser window client area, "monitor:N", "all"
     capture_area: str = "window"
     # "auto" (dxcam -> mss), "dxcam", "mss"
@@ -72,11 +81,16 @@ class AppConfig:
     require_focus: bool = True
     # Test mode: everything works, but mouse clicks are not sent.
     dry_run: bool = False
-    debug_view: bool = False
+    # Pause between clicks in ms. 0 = maximum speed (a click on every
+    # captured frame while the target is visible).
+    click_interval_ms: float = 0.0
+    # Live preview inside the main window.
+    debug_view: bool = True
+    preview_fps: int = 60
     # Sleep when nothing was found for a while to save CPU (ms, 0 = never).
     idle_sleep_ms: float = 2.0
     detector: DetectorConfig = field(default_factory=DetectorConfig)
-    tracker: TrackerConfig = field(default_factory=TrackerConfig)
+    target: TargetConfig = field(default_factory=TargetConfig)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -87,11 +101,16 @@ class AppConfig:
         if not isinstance(data, dict):
             return cfg
         _merge_into(cfg, data)
+        if int(data.get("config_version", 1) or 1) < 2:
+            # v1 -> v2: the preview became part of the main window and is on
+            # by default; the old "wait for the jump" settings are gone
+            cfg.debug_view = True
+        cfg.config_version = CONFIG_VERSION
         cfg.validate()
         return cfg
 
     def validate(self) -> None:
-        d, t = self.detector, self.tracker
+        d, t = self.detector, self.target
         d.downscale = int(min(4, max(1, d.downscale)))
         d.min_area = int(max(10, d.min_area))
         d.max_area = int(max(d.min_area + 1, d.max_area))
@@ -108,11 +127,17 @@ class AppConfig:
                 continue
             ranges.append([min(179, max(0, lo)), min(179, max(0, hi))])
         d.hue_ranges = ranges or DetectorConfig().hue_ranges
-        t.stable_frames = int(min(10, max(1, t.stable_frames)))
-        t.stale_timeout_ms = float(min(5000, max(10, t.stale_timeout_ms)))
+        if t.mode not in ("motion", "sample"):
+            t.mode = "motion"
+        t.fresh_window_ms = float(min(5000, max(50, t.fresh_window_ms)))
+        t.min_fresh = float(min(1.0, max(0.05, t.min_fresh)))
+        t.min_similarity = float(min(0.99, max(0.05, t.min_similarity)))
+        t.sample_similarity = float(min(0.99, max(0.05, t.sample_similarity)))
+        t.max_target_area = int(max(d.min_area + 1, t.max_target_area))
         t.lost_timeout_ms = float(min(10000, max(10, t.lost_timeout_ms)))
-        t.max_cps = float(max(0.0, t.max_cps))
-        t.blacklist_after = int(max(0, t.blacklist_after))
+        t.unlock_after_ms = float(min(60000, max(0, t.unlock_after_ms)))
+        self.click_interval_ms = float(min(10000, max(0.0, self.click_interval_ms)))
+        self.preview_fps = int(min(144, max(10, self.preview_fps)))
         self.idle_sleep_ms = float(min(100, max(0, self.idle_sleep_ms)))
         if self.capture_backend not in ("auto", "dxcam", "mss"):
             self.capture_backend = "auto"

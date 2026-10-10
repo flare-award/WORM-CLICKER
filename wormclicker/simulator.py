@@ -3,8 +3,9 @@
 ``SimulatedGame`` renders the synthetic worm with distractors; a click
 inside the worm counts as a hit and teleports it to a random position with
 a random rotation. ``render_latency_s`` keeps the old picture on screen for
-a while after a hit (browser + compositor latency), which is exactly the
-situation where a naive clicker keeps clicking the old coordinates.
+a while after a hit (browser + compositor latency). ``decoy`` adds a static
+picture of the same worm to the page: it must never become the target.
+``kick()`` is the user's first manual click on the worm.
 
 ``SimCapture`` / ``SimMouse`` connect the simulator to the real
 ``AutomationEngine`` at an arbitrary virtual-desktop offset (negative
@@ -27,7 +28,7 @@ from .synthetic import scene_with_distractors
 class SimulatedGame:
     def __init__(self, width: int = 1280, height: int = 720, pixel_size: int = 4, seed: int = 0,
                  distractors: bool = True, render_latency_s: float = 0.0, smooth: bool = False,
-                 clock=time.perf_counter):
+                 decoy: bool = False, clock=time.perf_counter):
         self.w, self.h = width, height
         self.ps = pixel_size
         self.rng = np.random.default_rng(seed)
@@ -39,6 +40,12 @@ class SimulatedGame:
             self._bg = scene_with_distractors(width, height, seed)
         else:
             self._bg = make_background(width, height, seed=seed)
+        self.decoy_center: tuple[float, float] | None = None
+        self.decoy_mask: np.ndarray | None = None
+        if decoy:
+            self.decoy_center = (width * 0.85, height * 0.85)
+            self.decoy_mask = render_worm(self._bg, self.decoy_center, 25.0, pixel_size, smooth)
+        self.decoy_clicks = 0
         self._lock = threading.Lock()
         self.center = (width * 0.5, height * 0.5)
         self.angle = 0.0
@@ -60,8 +67,11 @@ class SimulatedGame:
         # the synthetic UI distractors occupy the top band (y < 240); the
         # worm overlapping them is covered by detector tests instead
         top = 240 + m if self.distractors else m
-        c = (float(self.rng.uniform(m, self.w - m)), float(self.rng.uniform(top, self.h - m)))
-        return c, float(self.rng.uniform(0, 360))
+        while True:
+            c = (float(self.rng.uniform(m, self.w - m)), float(self.rng.uniform(top, self.h - m)))
+            dc = self.decoy_center
+            if dc is None or abs(c[0] - dc[0]) > 30 * self.ps or abs(c[1] - dc[1]) > 30 * self.ps:
+                return c, float(self.rng.uniform(0, 360))
 
     def _new_position(self) -> None:
         self.center, self.angle = self._random_state()
@@ -106,11 +116,22 @@ class SimulatedGame:
         return self._mask
 
     # ------------------------------------------------------------- input
-    def click(self, x: int, y: int, now: float | None = None) -> bool:
+    def kick(self) -> bool:
+        """The user's manual click on the worm (makes it jump)."""
+        mask = self.mask
+        ys, xs = np.nonzero(mask)
+        if xs.size == 0:
+            return False
+        j = int(np.argmin((xs - xs.mean()) ** 2 + (ys - ys.mean()) ** 2))
+        return self.click(int(xs[j]), int(ys[j]), user=True)
+
+    def click(self, x: int, y: int, now: float | None = None, user: bool = False) -> bool:
         now = self.clock() if now is None else now
         with self._lock:
             self._apply_pending(now)
             inside = 0 <= x < self.w and 0 <= y < self.h
+            if inside and self.decoy_mask is not None and self.decoy_mask[y, x]:
+                self.decoy_clicks += 1
             if not self.visible:
                 self.clicks_while_hidden += 1
                 return False
@@ -119,8 +140,9 @@ class SimulatedGame:
                 return False
             hit = inside and bool(mask[y, x]) and self._pending is None
             if hit:
-                self.hits += 1
-                self.hit_times.append(now)
+                if not user:
+                    self.hits += 1
+                    self.hit_times.append(now)
                 self._old_masks.append(mask)
                 c, a = self._random_state()
                 if self.render_latency_s > 0:

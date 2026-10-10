@@ -12,7 +12,8 @@ from wormclicker.sprite import make_background, render_worm
 def test_config_roundtrip(tmp_path):
     cfg = AppConfig(hotkey_toggle="Ctrl+F9", dry_run=True)
     cfg.detector.confidence_threshold = 0.7
-    cfg.tracker.max_cps = 25
+    cfg.click_interval_ms = 25
+    cfg.target.mode = "sample"
     p = tmp_path / "c.json"
     save_config(cfg, p)
     back = load_config(p)
@@ -23,15 +24,29 @@ def test_config_tolerates_garbage(tmp_path):
     p = tmp_path / "c.json"
     p.write_text(json.dumps({"hotkey_toggle": "F10", "unknown": 1,
                              "detector": {"downscale": 99, "min_area": "abc", "hue_ranges": [[300, -5], "x"]},
-                             "tracker": {"stable_frames": 0}}), encoding="utf-8")
+                             "target": {"mode": "nonsense", "min_fresh": 7},
+                             "click_interval_ms": -5, "preview_fps": 1000}), encoding="utf-8")
     cfg = load_config(p)
     assert cfg.hotkey_toggle == "F10"
     assert cfg.detector.downscale == 4
     assert cfg.detector.min_area == DetectorConfig().min_area
     assert cfg.detector.hue_ranges == [[179, 0]]
-    assert cfg.tracker.stable_frames == 1
+    assert cfg.target.mode == "motion" and cfg.target.min_fresh == 1.0
+    assert cfg.click_interval_ms == 0.0 and cfg.preview_fps == 144
     p.write_text("{broken", encoding="utf-8")
     assert load_config(p) == AppConfig()
+
+
+def test_v1_config_migrates_preview_on(tmp_path):
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps({"hotkey_toggle": "F9", "debug_view": False,
+                             "tracker": {"stale_timeout_ms": 250}}), encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.hotkey_toggle == "F9"
+    assert cfg.debug_view is True and cfg.config_version == 2
+    cfg.debug_view = False
+    save_config(cfg, p)
+    assert load_config(p).debug_view is False          # v2 keeps the user's choice
 
 
 def test_default_config_file_matches_defaults():
@@ -42,6 +57,7 @@ def test_default_config_file_matches_defaults():
     assert AppConfig.from_dict(data) == AppConfig()
     assert data["hotkey_toggle"] == "F6" and data["hotkey_stop"] == "F7"
     assert data["dry_run"] is False
+    assert data["debug_view"] is True and data["click_interval_ms"] == 0
 
 
 def test_circular_range_wraps():

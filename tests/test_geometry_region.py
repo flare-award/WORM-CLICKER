@@ -109,6 +109,27 @@ def test_window_mode_tracks_move_resize_and_focus():
     assert rp.get() == (None, "окно браузера свернуто")
 
 
+def test_preview_follows_foreground_and_start_locks_window():
+    rp, w, t = make_window_provider()
+    w.pids.update({5: 1, 7: 999, 8: 999})       # 5 = our UI, 7 = browser, 8 = another app
+    w.rects.update({7: Rect(0, 0, 1000, 700), 8: Rect(200, 200, 600, 400)})
+    w.fg = 7
+    assert rp.get(follow=True, need_focus=False)[0] == Rect(0, 0, 1000, 700)
+    w.fg = 5                                     # the user looks at our preview
+    assert rp.get(follow=True, need_focus=False)[0] == Rect(0, 0, 1000, 700)
+    w.fg = 8                                     # preview follows the window in front
+    assert rp.get(follow=True, need_focus=False)[0] == Rect(200, 200, 600, 400)
+    w.fg = 7
+    rp.rebind()                                  # F6 pressed in the browser: locked
+    assert rp.hwnd == 7
+    w.fg = 8
+    rect, why = rp.get(need_focus=True)          # clicking: pause without focus, no switching
+    assert rect is None and rp.hwnd == 7
+    w.fg = 5
+    rp.rebind()                                  # start button in our window keeps the browser
+    assert rp.hwnd == 7
+
+
 def test_monitor_modes():
     rp = RegionProvider("monitor:1", lambda: MONS)
     assert rp.get()[0] == LEFT

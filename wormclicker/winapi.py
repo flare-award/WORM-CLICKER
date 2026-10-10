@@ -135,9 +135,10 @@ def cursor_pos() -> tuple[int, int] | None:
 def exclude_from_capture(hwnd: int) -> bool:
     """Hide our own windows from screen capture (Windows 10 2004+).
 
-    Prevents the detector from finding the worm inside the debug preview.
+    Prevents the program from seeing the worm inside its own preview.
+    ``WORMCLICKER_ALLOW_CAPTURE=1`` disables it (UI screenshots in CI).
     """
-    if not IS_WINDOWS or not hwnd:
+    if not IS_WINDOWS or not hwnd or os.environ.get("WORMCLICKER_ALLOW_CAPTURE") == "1":
         return False
     try:
         WDA_EXCLUDEFROMCAPTURE = 0x11
@@ -161,3 +162,16 @@ def monitors_win32() -> list[Rect]:
 
     user32.EnumDisplayMonitors(None, None, MONITORENUMPROC(cb), 0)
     return out
+
+
+def set_timer_resolution(enable: bool, ms: int = 1) -> bool:
+    """1 ms system timer resolution while the program runs (smooth 60-120 fps
+    preview and precise click intervals; the default Windows tick is 15.6 ms)."""
+    if not IS_WINDOWS:
+        return False
+    try:
+        winmm = ctypes.WinDLL("winmm")
+        fn = winmm.timeBeginPeriod if enable else winmm.timeEndPeriod
+        return fn(ms) == 0
+    except (AttributeError, OSError):
+        return False

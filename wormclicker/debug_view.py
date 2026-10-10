@@ -1,4 +1,9 @@
-"""Annotated debug image (runs in the UI thread, never in the click loop)."""
+"""Preview rendering (runs in the UI thread, never in the click loop).
+
+Only the target is drawn: its outline, corner brackets and the click point.
+Text is drawn by Tk on top of the image (OpenCV can not render Cyrillic -
+that is where the "???" labels of the old debug window came from).
+"""
 
 from __future__ import annotations
 
@@ -7,64 +12,55 @@ import numpy as np
 
 from .automation import DebugFrame
 
-GREEN = (80, 230, 80)
-YELLOW = (40, 210, 240)
-GRAY = (150, 150, 150)
-RED = (70, 70, 240)
-CYAN = (230, 200, 60)
+TARGET = (162, 95, 255)       # BGR, pink accent
+OUTLINE = (255, 255, 255)
+CLICK = (120, 255, 140)
 
 
-def annotate(df: DebugFrame, max_w: int = 720, max_h: int = 460) -> tuple[np.ndarray, list[str]]:
-    """Return (BGR image scaled to fit, text lines describing candidates)."""
-    frame = df.frame
-    img = frame[..., :3].copy() if frame.shape[2] == 4 else frame.copy()
-    h, w = img.shape[:2]
-    scale = min(1.0, max_w / w, max_h / h)
-    lines: list[str] = []
-    det = df.detection
-    th = max(1, int(round(1.5 / max(scale, 0.25))))
-    font = 0.45 / max(scale, 0.35)
-    for i, c in enumerate(det.candidates):
-        x, y, bw, bh = c.bbox
-        best = det.best is c
-        color = GREEN if best else (YELLOW if c.accepted else GRAY)
-        cv2.rectangle(img, (x, y), (x + bw, y + bh), color, th)
-        if c.contour is not None and (best or c.accepted):
-            cv2.drawContours(img, [c.contour], -1, CYAN, th)
-        label = f"{c.score:.2f}" if c.accepted else (c.reject or "")[:28]
-        cv2.putText(img, label, (x, max(12, y - 4)), cv2.FONT_HERSHEY_SIMPLEX, font, color, th, cv2.LINE_AA)
-        if i < 8:
-            f = c.features
-            extra = (f" глаза={f.get('eyes', '-')} оттенки={f.get('shades', '-')} "
-                     f"aspect={f.get('aspect', '-')} hu={f.get('hu', '-')}") if f else ""
-            lines.append(f"{'★' if best else '•'} ({x},{y}) {c.area}px  "
-                         f"{'OK ' + format(c.score, '.2f') if c.accepted else c.reject}{extra}")
-    if det.best is not None:
-        cx, cy = int(round(det.best.click[0])), int(round(det.best.click[1]))
-        r = max(6, int(8 / max(scale, 0.25)))
-        cv2.circle(img, (cx, cy), r, RED, th)
-        cv2.line(img, (cx - 2 * r, cy), (cx + 2 * r, cy), RED, th)
-        cv2.line(img, (cx, cy - 2 * r), (cx, cy + 2 * r), RED, th)
-    for bx, by, br in df.blacklist:
-        fx, fy = int(bx - df.rect.left), int(by - df.rect.top)
-        cv2.circle(img, (fx, fy), int(br), RED, th)
-        cv2.line(img, (fx - int(br), fy - int(br)), (fx + int(br), fy + int(br)), RED, th)
-    if scale < 1.0:
-        img = cv2.resize(img, (max(1, int(w * scale)), max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
-    head = f"кадр {w}x{h}  обработка {det.ms:.1f} мс  кандидатов {len(det.candidates)}"
-    if det.tiny_rejected:
-        head += f"  мелких точек {det.tiny_rejected}"
-    if df.decision is not None:
-        head += f"  | {df.decision.reason}"
-    if det.best is None:
-        head += f"  | {det.reason}"
-    return img, [head] + lines
+def render(df: DebugFrame) -> np.ndarray | None:
+    """Return an RGB image with the target overlay, or None when there is no picture."""
+    img = df.image
+    if img is None:
+        return None
+    if img.ndim == 3 and img.shape[2] == 4:
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
+    else:
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    tg = df.target
+    if tg is None:
+        return rgb
+    s = df.scale
+    tgt = TARGET[::-1]            # drawing on RGB
+    cnt = np.round(tg.contour.astype(np.float32) * s).astype(np.int32)
+    cv2.drawContours(rgb, [cnt], -1, tgt, 2, cv2.LINE_AA)
+    x, y, w, h = (v * s for v in tg.bbox)
+    pad = 6
+    x0, y0, x1, y1 = int(x - pad), int(y - pad), int(x + w + pad), int(y + h + pad)
+    arm = max(6, int(min(x1 - x0, y1 - y0) * 0.28))
+    for (cx, cy, dx, dy) in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
+        cv2.line(rgb, (cx, cy), (cx + dx * arm, cy), OUTLINE, 2, cv2.LINE_AA)
+        cv2.line(rgb, (cx, cy), (cx, cy + dy * arm), OUTLINE, 2, cv2.LINE_AA)
+    px, py = int(round(tg.click[0] * s)), int(round(tg.click[1] * s))
+    cv2.circle(rgb, (px, py), 5, CLICK[::-1], 2, cv2.LINE_AA)
+    cv2.line(rgb, (px - 10, py), (px - 6, py), CLICK[::-1], 2, cv2.LINE_AA)
+    cv2.line(rgb, (px + 6, py), (px + 10, py), CLICK[::-1], 2, cv2.LINE_AA)
+    cv2.line(rgb, (px, py - 10), (px, py - 6), CLICK[::-1], 2, cv2.LINE_AA)
+    cv2.line(rgb, (px, py + 6), (px, py + 10), CLICK[::-1], 2, cv2.LINE_AA)
+    return rgb
 
 
-def to_png_base64(img: np.ndarray) -> str:
-    import base64
+def to_ppm(rgb: np.ndarray) -> bytes:
+    """Binary PPM (P6) - Tk's PhotoImage parses it much faster than PNG."""
+    h, w = rgb.shape[:2]
+    if not rgb.flags["C_CONTIGUOUS"]:
+        rgb = np.ascontiguousarray(rgb)
+    return b"P6 %d %d 255\n" % (w, h) + rgb.tobytes()
 
-    ok, buf = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 1])
-    if not ok:
-        raise ValueError("png encode failed")
-    return base64.b64encode(buf.tobytes()).decode("ascii")
+
+def target_box_on_preview(df: DebugFrame) -> tuple[float, float, float, float] | None:
+    """Target bbox in preview pixels (for the Tk label next to it)."""
+    if df.target is None or df.image is None:
+        return None
+    x, y, w, h = df.target.bbox
+    s = df.scale
+    return x * s, y * s, w * s, h * s

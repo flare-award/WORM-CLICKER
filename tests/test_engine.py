@@ -18,20 +18,30 @@ ORIGIN = (-1280, -100)
 MONS = [Rect(-1280, -100, 1280, 720), Rect(0, 0, 1920, 1080)]
 
 
-def build(game=None, lag=0, cfg=None, mouse=None, capture=None, area="monitor:0"):
+def build(game=None, lag=0, cfg=None, mouse=None, capture=None, area="monitor:0", preview=False, **cfg_kw):
     game = game or SimulatedGame(1280, 720, seed=7)
     cap = capture or SimCapture(game, ORIGIN, lag_frames=lag, monitors=MONS)
     sim_mouse = mouse or SimMouse(game, ORIGIN)
-    cfg = cfg or AppConfig(capture_area=area)
+    cfg = cfg or AppConfig(capture_area=area, debug_view=preview, **cfg_kw)
     eng = AutomationEngine(cfg, capture_factory=lambda: cap, mouse_factory=lambda dry: sim_mouse,
                            region_provider=RegionProvider(area, lambda: MONS), cursor_fn=lambda: None)
     return eng, game, cap, sim_mouse
 
 
-def run_for(eng, seconds):
+def wait_until(cond, timeout=2.0):
+    end = time.perf_counter() + timeout
+    while time.perf_counter() < end:
+        if cond():
+            return True
+        time.sleep(0.01)
+    return cond()
+
+
+def start_and_kick(eng, game, warm=0.15):
+    """Start, let the program memorise the static picture, then the user clicks the worm once."""
     assert eng.start()
-    time.sleep(seconds)
-    eng.stop()
+    time.sleep(warm)
+    assert game.kick()
 
 
 @pytest.fixture
@@ -42,57 +52,101 @@ def cleanup():
         e.shutdown()
 
 
-def test_hunts_worm_on_negative_coordinate_monitor(cleanup):
+def test_waits_for_motion_then_hunts_on_negative_coordinate_monitor(cleanup):
     eng, game, cap, mouse = build()
     cleanup.append(eng)
-    run_for(eng, 1.5)
-    assert game.hits >= 20
-    assert game.misses <= max(1, game.hits // 50)
-    assert all(x < 0 for x, _, _ in mouse.clicks)          # clicks really on the left monitor
+    assert eng.start()
+    time.sleep(0.5)
+    assert len(mouse.clicks) == 0                    # the worm has not moved yet: no target
+    assert eng.status == Status.SEARCHING
+    game.kick()
+    time.sleep(1.5)
+    eng.stop()
+    assert game.hits >= 30
+    assert all(x < 0 for x, _, _ in mouse.clicks)    # clicks really on the left monitor
     s = eng.stats.snapshot()
     assert s.clicks == len(mouse.clicks)
     assert s.jumps >= game.hits - 2
 
 
-@pytest.mark.parametrize("latency,lag", [(0.03, 0), (0.03, 2), (0.0, 3)])
-def test_never_clicks_old_position_with_render_latency(cleanup, latency, lag):
+def test_static_decoy_worm_is_never_clicked(cleanup):
+    game = SimulatedGame(1280, 720, seed=11, decoy=True)
+    eng, game, cap, mouse = build(game=game)
+    cleanup.append(eng)
+    start_and_kick(eng, game)
+    time.sleep(1.5)
+    eng.stop()
+    assert game.hits >= 30
+    assert game.decoy_clicks == 0
+
+
+@pytest.mark.parametrize("latency,lag", [(0.03, 0), (0.03, 2)])
+def test_clicks_continuously_without_waiting_for_jump(cleanup, latency, lag):
     game = SimulatedGame(1280, 720, seed=3, render_latency_s=latency)
     eng, game, cap, mouse = build(game=game, lag=lag)
     cleanup.append(eng)
-    run_for(eng, 1.5)
+    start_and_kick(eng, game)
+    time.sleep(1.5)
+    eng.stop()
     assert game.hits >= 10
-    assert game.clicks_on_old_spot == 0
-    assert game.misses <= 1
-    assert eng.stats.snapshot().stale_frames > 0       # stale frames were seen and skipped
+    # the old picture is still on screen after a hit - the program keeps clicking it
+    assert len(mouse.clicks) > 2 * game.hits
+    assert game.decoy_clicks == 0
+
+
+@pytest.mark.parametrize("interval,expected", [(50.0, 20.0), (20.0, 50.0)])
+def test_click_interval_sets_the_rate(cleanup, interval, expected):
+    eng, game, cap, mouse = build(click_interval_ms=interval)
+    cleanup.append(eng)
+    start_and_kick(eng, game)
+    time.sleep(0.3)
+    n0 = len(mouse.clicks)
+    time.sleep(2.0)
+    rate = (len(mouse.clicks) - n0) / 2.0
+    eng.stop()
+    assert expected * 0.8 <= rate <= expected * 1.1, rate
+
+
+def test_interval_change_applies_while_running(cleanup):
+    eng, game, cap, mouse = build(click_interval_ms=100.0)
+    cleanup.append(eng)
+    start_and_kick(eng, game)
+    time.sleep(1.0)
+    slow = len(mouse.clicks)
+    cfg = AppConfig(capture_area="monitor:0", debug_view=False, click_interval_ms=0.0)
+    eng.apply_config(cfg)
+    n0 = len(mouse.clicks)
+    time.sleep(1.0)
+    eng.stop()
+    assert slow <= 12
+    assert len(mouse.clicks) - n0 > 3 * slow
 
 
 def test_no_clicks_while_worm_hidden(cleanup):
     eng, game, cap, mouse = build()
     cleanup.append(eng)
+    start_and_kick(eng, game)
+    time.sleep(0.3)
     game.set_visible(False)
-    assert eng.start()
-    time.sleep(0.6)
-    assert len(mouse.clicks) == 0
-    assert game.clicks_while_hidden == 0
-    assert eng.status == Status.SEARCHING
-    game.set_visible(True)
-    time.sleep(0.4)
+    time.sleep(0.1)
+    n = len(mouse.clicks)
+    hidden0 = game.clicks_while_hidden
+    time.sleep(0.5)
+    assert len(mouse.clicks) == n
+    assert game.clicks_while_hidden == hidden0
     eng.stop()
-    assert game.hits >= 1
 
 
 def test_temporary_disappearance_counts_lost_and_reacquired(cleanup):
     eng, game, cap, mouse = build()
     cleanup.append(eng)
-    assert eng.start()
+    start_and_kick(eng, game)
     time.sleep(0.3)
     game.set_visible(False)
     time.sleep(0.5)
     n_hidden = len(mouse.clicks)
-    time.sleep(0.2)
-    assert len(mouse.clicks) == n_hidden
-    game.set_visible(True)
-    time.sleep(0.3)
+    game.set_visible(True)            # reappears (a new picture - pixels changed)
+    time.sleep(0.4)
     eng.stop()
     s = eng.stats.snapshot()
     assert s.lost >= 1 and s.reacquired >= 1
@@ -104,12 +158,26 @@ def test_starts_inactive_and_toggle(cleanup):
     cleanup.append(eng)
     assert not eng.active and eng.status == Status.IDLE
     assert eng.toggle() is True and eng.active
+    time.sleep(0.15)
+    game.kick()
     time.sleep(0.3)
     assert eng.toggle() is False and not eng.active
     n = len(mouse.clicks)
     assert n > 0
     time.sleep(0.3)
     assert len(mouse.clicks) == n         # stop really stops clicking
+
+
+def test_target_learned_in_preview_is_clicked_right_after_start(cleanup):
+    eng, game, cap, mouse = build(preview=True)
+    cleanup.append(eng)
+    time.sleep(0.2)                       # watch mode: preview running, no clicks
+    game.kick()
+    assert wait_until(lambda: eng.finder.model is not None)
+    assert len(mouse.clicks) == 0
+    assert eng.start()
+    assert wait_until(lambda: game.hits >= 5)
+    eng.stop()
 
 
 def test_no_competing_loops(cleanup):
@@ -132,8 +200,8 @@ def test_no_competing_loops(cleanup):
 
 
 def test_shutdown_stops_thread_and_releases_capture(cleanup):
-    eng, game, cap, mouse = build()
-    eng.start()
+    eng, game, cap, mouse = build(preview=True)
+    start_and_kick(eng, game)
     time.sleep(0.2)
     assert eng.shutdown(timeout=3)
     assert not any(t.name == "automation" and t.is_alive() for t in threading.enumerate())
@@ -153,9 +221,8 @@ def test_mouse_error_stops_automation(cleanup):
 
     eng, game, cap, _ = build(mouse=BadMouse())
     cleanup.append(eng)
-    eng.start()
-    time.sleep(0.3)
-    assert not eng.active
+    start_and_kick(eng, game)
+    assert wait_until(lambda: not eng.active)
     assert eng.status == Status.ERROR
     assert "blocked" in eng.message
 
@@ -177,8 +244,8 @@ def test_capture_errors_lead_to_error_state(cleanup):
     eng, game, _, mouse = build(capture=BrokenCapture())
     cleanup.append(eng)
     eng.start()
-    time.sleep(1.0)
-    assert not eng.active and eng.status == Status.ERROR
+    assert wait_until(lambda: not eng.active, 3.0)
+    assert eng.status == Status.ERROR
     assert len(mouse.clicks) == 0
 
 
@@ -196,14 +263,14 @@ def test_exclusion_rect_blocks_clicks(cleanup):
     eng, game, cap, mouse = build()
     cleanup.append(eng)
     eng.set_exclusions([MONS[0]])          # our window covers the whole game
-    eng.start()
+    start_and_kick(eng, game)
     time.sleep(0.4)
     eng.stop()
     assert len(mouse.clicks) == 0
 
 
 def test_dry_run_mouse_factory_used():
-    cfg = AppConfig(capture_area="monitor:0", dry_run=True)
+    cfg = AppConfig(capture_area="monitor:0", dry_run=True, debug_view=False)
     game = SimulatedGame(1280, 720, seed=1)
     cap = SimCapture(game, ORIGIN, monitors=MONS)
     created = []
@@ -215,44 +282,90 @@ def test_dry_run_mouse_factory_used():
     eng = AutomationEngine(cfg, capture_factory=lambda: cap, mouse_factory=factory,
                            region_provider=RegionProvider("monitor:0", lambda: MONS))
     try:
-        eng.start()
+        start_and_kick(eng, game)
         time.sleep(0.3)
         eng.stop()
         assert created == [True]
         assert game.hits == 0                       # the "game" never received a click
         assert eng.stats.snapshot().clicks > 0      # but the decisions were made
+        assert eng.finder.model is not None         # test mode never drops the target
     finally:
         eng.shutdown()
 
 
-def test_calibration_request_processed_when_idle(cleanup):
+def test_unresponsive_object_is_dropped(cleanup):
+    class Deaf:                       # clicks never reach the game -> the target never jumps
+        name = "deaf"
+        clicks = []
+
+        def click(self, x, y):
+            self.clicks.append((x, y, time.perf_counter()))
+
+    eng, game, cap, mouse = build(mouse=Deaf())
+    eng.cfg.target.unlock_after_ms = 300
+    cleanup.append(eng)
+    start_and_kick(eng, game)
+    assert wait_until(lambda: eng.stats.snapshot().ignored >= 1, 3.0)
+    n = len(mouse.clicks)
+    time.sleep(0.3)
+    assert len(mouse.clicks) == n               # ignored: no more clicks on it
+    assert eng.finder.model is None             # wrong object forgotten (it never jumped)
+    eng.stop()
+
+
+def test_sample_from_preview_selection_locks_without_motion(cleanup):
+    eng, game, cap, mouse = build(preview=True)
+    cleanup.append(eng)
+    got = []
+    eng.on_sample = got.append
+    assert wait_until(lambda: eng.debug_frame is not None and eng.debug_frame.image is not None)
+    cx, cy = game.center
+    box = (int(cx) - 60 + ORIGIN[0], int(cy) - 40 + ORIGIN[1], 120, 80)
+    eng.request_sample(box)
+    assert wait_until(lambda: bool(got))
+    assert got[0].ok, got[0].message
+    assert eng.finder.model.source == "sample" and eng.cfg.target.mode == "sample"
+    assert eng.start()                          # no kick needed in the sample mode
+    assert wait_until(lambda: game.hits >= 10)
+    eng.stop()
+
+
+def test_cursor_capture_processed_when_idle(cleanup):
     game = SimulatedGame(1280, 720, seed=2)
     eng, game, cap, mouse = build(game=game)
     cleanup.append(eng)
-    cx, cy = game.center
-    eng._cursor_fn = lambda: (int(cx) + ORIGIN[0], int(cy) + ORIGIN[1])
+    ys, xs = game.mask.nonzero()
+    j = len(xs) // 2
+    eng._cursor_fn = lambda: (int(xs[j]) + ORIGIN[0], int(ys[j]) + ORIGIN[1])
     got = []
-    eng.on_calibration = got.append
-    eng.request_calibration()
-    for _ in range(50):
-        if got:
-            break
-        time.sleep(0.05)
-    assert got and got[0].ok, got and got[0].message
+    eng.on_sample = got.append
+    eng.request_cursor_capture()
+    assert wait_until(lambda: bool(got))
+    assert got[0].ok, got[0].message
     assert eng.cfg.detector.expected_area > 0
     assert not eng.active and len(mouse.clicks) == 0
 
 
-def test_debug_frame_published_only_when_enabled(cleanup):
+def test_preview_published_at_high_rate_and_only_when_enabled(cleanup):
     eng, game, cap, mouse = build()
     cleanup.append(eng)
-    run_for(eng, 0.3)
-    assert eng.debug_frame is None
-    eng.cfg.debug_view = True
-    run_for(eng, 0.4)
+    time.sleep(0.3)
+    assert eng.debug_frame is None and eng.loops_started == 0      # nothing runs when idle
+    eng.cfg.preview_fps = 60
+    eng.set_preview(True)
+    time.sleep(0.3)
+    n0 = eng.preview_frames
+    time.sleep(1.0)
+    fps = eng.preview_frames - n0
+    assert fps >= 40, fps
     df = eng.debug_frame
-    assert df is not None and df.frame.ndim == 3
-    from wormclicker.debug_view import annotate
+    assert df is not None and df.image is not None and df.image.ndim == 3
+    assert df.image.shape[1] <= eng.preview_box[0]
+    from wormclicker.debug_view import render, to_ppm
 
-    img, lines = annotate(df)
-    assert img.shape[1] <= 720 and lines
+    game.kick()
+    assert wait_until(lambda: eng.debug_frame.target is not None)
+    rgb = render(eng.debug_frame)
+    assert rgb.shape[2] == 3
+    assert to_ppm(rgb).startswith(b"P6 ")
+    eng.set_preview(False)

@@ -21,14 +21,14 @@ def test_stats_snapshot_is_copy():
     t = [0.0]
     s = Stats(clock=lambda: t[0])
     s.session_started()
-    s.click(0.1, 5.0, 0.9)
+    s.click(0.1, 5.0)
     s.jump(30.0)
     s.incr("lost")
     t[0] = 0.5
     snap = s.snapshot()
     assert snap.clicks == 1 and snap.jumps == 1 and snap.lost == 1
     assert snap.avg_cps == pytest.approx(2.0)
-    s.click(0.1, 5.0, 0.9)
+    s.click(0.1, 5.0)
     assert snap.clicks == 1
 
 

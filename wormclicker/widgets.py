@@ -231,7 +231,7 @@ class Dropdown(tk.Frame):
         self.var = variable
         self._cmd = command
         self._font = font
-        self._options = list(options)
+        self._items = list(options)
         self._popup: tk.Toplevel | None = None
         self._label = tk.Label(self, bg=SURFACE2, fg=TEXT, font=font, anchor="w", padx=px(10), pady=px(6))
         self._label.pack(side="left", fill="x", expand=True)
@@ -245,12 +245,12 @@ class Dropdown(tk.Frame):
         self._refresh()
 
     def set_options(self, options: Sequence[tuple[str, str]]) -> None:
-        self._options = list(options)
+        self._items = list(options)
         self._refresh()
 
     def _refresh(self) -> None:
         cur = self.var.get()
-        text = next((t for k, t in self._options if k == cur), cur)
+        text = next((t for k, t in self._items if k == cur), cur)
         self._label.configure(text=text)
 
     def _paint(self, hover: bool) -> None:
@@ -272,7 +272,7 @@ class Dropdown(tk.Frame):
         inner = tk.Frame(top, bg=SURFACE2)
         inner.pack(fill="both", expand=True, padx=1, pady=1)
         cur = self.var.get()
-        for key, text in self._options:
+        for key, text in self._items:
             sel = key == cur
             lb = tk.Label(inner, text=("✓  " if sel else "    ") + text, bg=SURFACE2, fg=ACCENT if sel else TEXT,
                           font=self._font, anchor="w", padx=px(10), pady=px(6), cursor="hand2")

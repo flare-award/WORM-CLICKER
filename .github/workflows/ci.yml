@@ -31,11 +31,16 @@ jobs:
         run: ruff check wormclicker tests
       - name: Tests (incl. Windows API, Tk UI smoke test)
         run: |
-          python -m pytest -v -rs 2>&1 | Tee-Object -FilePath pytest.txt
+          python -m pytest -v -rs --tb=short 2>&1 | Tee-Object -FilePath pytest.txt
           $code = $LASTEXITCODE
-          $lines = Get-Content pytest.txt | Where-Object { $_ -match 'FAILED|ERROR|SKIPPED|passed|failed|Error' }
-          $msg = ($lines | Select-Object -Last 40) -join '%0A'
+          $summary = Get-Content pytest.txt | Where-Object { $_ -match 'SKIPPED|FAILED|ERROR|passed|failed' -and $_ -notmatch ' PASSED ' }
+          $msg = ($summary | Select-Object -Last 30) -join '%0A'
           Write-Output "::notice title=pytest (Python ${{ matrix.python }})::$msg"
+          if ($code -ne 0) {
+            $tb = Get-Content pytest.txt | Where-Object { $_ -match '^E |\.py:\d+: in |^_{5,}' }
+            $tbmsg = ($tb | Select-Object -First 60) -join '%0A'
+            Write-Output "::error title=pytest tracebacks (Python ${{ matrix.python }})::$tbmsg"
+          }
           exit $code
       - name: Benchmark (no real clicks)
         run: |

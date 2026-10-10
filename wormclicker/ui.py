@@ -523,7 +523,9 @@ class App:
             for it in (self._hud_bg, self._hud_dot, self._hud_text):
                 self.cv.itemconfigure(it, state="hidden")
             return
-        x, y = max(x0, 0) + px(10), max(y0, 0) + px(10)
+        x = max(x0, 0) + px(10)
+        # use the letterbox band above the picture when there is room, so the HUD does not hide the game
+        y = (y0 - px(36)) // 2 if y0 >= px(40) else max(y0, 0) + px(10)
         self.cv.itemconfigure(self._hud_text, text=text, state="normal")
         self.cv.coords(self._hud_text, x + px(22), y + px(13))
         tb = self.cv.bbox(self._hud_text)

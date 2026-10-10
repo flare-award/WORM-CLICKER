@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check wormclicker tests
+      - name: Tests (incl. Windows API, Tk UI smoke test)
+        run: python -m pytest -v
+      - name: Benchmark (no real clicks)
+        run: python run_wormclicker.py --benchmark
+      - name: Build exe
+        if: matrix.python == '3.12'
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name WormClicker --collect-submodules dxcam run_wormclicker.py
+          copy config.default.json dist\
+          xcopy /e /i /y practice dist\practice
+        shell: cmd
+      - name: Smoke-test exe starts
+        if: matrix.python == '3.12'
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\WormClicker.exe -ArgumentList "--dry-run" -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited) { throw "WormClicker.exe exited early with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+      - uses: actions/upload-artifact@v4
+        if: matrix.python == '3.12'
+        with:
+          name: WormClicker-windows
+          path: dist/
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r requirements-dev.txt
+      - run: ruff check wormclicker tests
+      - run: python -m pytest -q

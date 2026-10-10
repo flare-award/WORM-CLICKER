@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Worm Clicker — тренировочная мишень</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0d0e14; color: #ddd; font: 14px "Segoe UI", sans-serif; overflow: hidden; }
+  #hud { position: fixed; top: 10px; left: 12px; z-index: 2; user-select: none; }
+  #hud b { color: #fff; font-size: 22px; }
+  #opts { position: fixed; top: 10px; right: 12px; z-index: 2; background: #1b1d27cc; padding: 8px 10px; border-radius: 6px; }
+  #opts label { display: block; margin: 2px 0; }
+  canvas { display: block; }
+  .pinkbtn { position: fixed; left: 14px; top: 120px; background: #ff6fae; color: #fff; border: 0; padding: 10px 26px;
+             font: bold 16px sans-serif; border-radius: 4px; z-index: 2; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div>Попадания: <b id="hits">0</b> &nbsp; Промахи: <span id="miss">0</span></div>
+  <div>Попаданий/с (5 с): <span id="rate">0.0</span> &nbsp; Лучший результат/с: <span id="best">0.0</span></div>
+  <div style="color:#888">Локальная мишень для проверки Worm Clicker. Ничего не отправляется в сеть.</div>
+</div>
+<div id="opts">
+  <label><input type="checkbox" id="rot" checked> случайный поворот</label>
+  <label><input type="checkbox" id="anim"> анимация «ползания»</label>
+  <label><input type="checkbox" id="slide"> плавное перемещение (150 мс)</label>
+  <label><input type="checkbox" id="hide"> исчезать на 300 мс после попадания</label>
+  <label><input type="checkbox" id="noise" checked> помехи (частицы, текст, кнопка)</label>
+  <label>размер пикселя <input type="range" id="ps" min="2" max="10" value="4"> <span id="psv">4</span></label>
+  <button id="reset">Сбросить</button>
+</div>
+<button class="pinkbtn" id="decoy">PLAY</button>
+<canvas id="c"></canvas>
+<script>
+"use strict";
+// Same grid and palette as wormclicker/sprite.py (checked by tests).
+const GRID = [
+  "..............DDDDDD..",
+  ".............DWWPWWPD.",
+  "..DDDDDDDDDDDPWKPWKPD.",
+  ".DLLLLLLLLLLLPWKPWKPPD",
+  "DPPPPPPPPPPPPPPPPPPPPD",
+  "DPMPPMPPMPPMPPPPPPLPPD",
+  ".DMMMMMMMMMMMMMMMMMMD.",
+  "..DDDDDDDDDDDDDDDDDD..",
+];
+const PAL = { D: "#7d1f4b", M: "#d94a8c", P: "#ff6fae", L: "#ffb8d8", W: "#f2f0f5", K: "#1a1020" };
+const GW = GRID[0].length, GH = GRID.length;
+
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+const $ = id => document.getElementById(id);
+let W = 0, H = 0;
+function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; }
+addEventListener("resize", resize); resize();
+
+const worm = { x: 0, y: 0, a: 0, visible: true, from: null, t0: 0 };
+let hits = 0, miss = 0, best = 0;
+const hitTimes = [];
+const particles = Array.from({ length: 70 }, () => ({ x: Math.random(), y: Math.random(), r: 1 + Math.random() * 2.5,
+  vx: (Math.random() - .5) * .0004, vy: (Math.random() - .5) * .0004, c: Math.random() < .6 ? "#ff6fae" : "#ffffff" }));
+
+function ps() { return +$("ps").value; }
+function place() {
+  const m = GW * ps();
+  const nx = m + Math.random() * Math.max(1, W - 2 * m);
+  const ny = 200 + m / 2 + Math.random() * Math.max(1, H - 200 - m);
+  const na = $("rot").checked ? Math.random() * 360 : 0;
+  if ($("slide").checked) { worm.from = { x: worm.x, y: worm.y, a: worm.a }; worm.t0 = performance.now(); }
+  worm.x = nx; worm.y = ny; worm.a = na;
+  if ($("hide").checked) { worm.visible = false; setTimeout(() => worm.visible = true, 300); }
+}
+
+function pose(now) {
+  if (!worm.from) return worm;
+  const k = Math.min(1, (now - worm.t0) / 150);
+  if (k >= 1) { worm.from = null; return worm; }
+  return { x: worm.from.x + (worm.x - worm.from.x) * k, y: worm.from.y + (worm.y - worm.from.y) * k,
+           a: worm.from.a + (worm.a - worm.from.a) * k };
+}
+
+function cellAt(px, py, now) {
+  // inverse transform of the click into sprite grid coordinates
+  const p = pose(now), s = ps(), r = -p.a * Math.PI / 180;
+  const dx = px - p.x, dy = py - p.y;
+  const lx = dx * Math.cos(r) - dy * Math.sin(r), ly = dx * Math.sin(r) + dy * Math.cos(r);
+  const gx = Math.floor(lx / s + GW / 2), gy = Math.floor(ly / s + GH / 2);
+  if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return ".";
+  return GRID[gy][gx];
+}
+
+cv.addEventListener("mousedown", e => {
+  const now = performance.now();
+  if (worm.visible && cellAt(e.clientX, e.clientY, now) !== ".") {
+    hits++; hitTimes.push(now); place();
+  } else miss++;
+});
+$("reset").onclick = () => { hits = miss = best = 0; hitTimes.length = 0; place(); };
+$("ps").oninput = () => $("psv").textContent = $("ps").value;
+$("decoy").onclick = () => miss++;
+
+function drawWorm(now) {
+  const p = pose(now), s = ps();
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(p.a * Math.PI / 180);
+  ctx.imageSmoothingEnabled = false;
+  const wig = $("anim").checked ? now / 120 : 0;
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+    const ch = GRID[y][x];
+    if (ch === ".") continue;
+    const dy = (wig && x < 13) ? Math.round(Math.sin(wig + x * .55)) : 0;
+    ctx.fillStyle = PAL[ch];
+    ctx.fillRect((x - GW / 2) * s, (y + dy - GH / 2) * s, s, s);
+  }
+  ctx.restore();
+}
+
+function frame(now) {
+  ctx.fillStyle = "#0d0e14"; ctx.fillRect(0, 0, W, H);
+  if ($("noise").checked) {
+    for (const q of particles) {
+      q.x = (q.x + q.vx + 1) % 1; q.y = (q.y + q.vy + 1) % 1;
+      ctx.fillStyle = q.c; ctx.beginPath(); ctx.arc(q.x * W, q.y * H, q.r, 0, 7); ctx.fill();
+    }
+    ctx.fillStyle = "#ff6fae"; ctx.font = "bold 28px sans-serif"; ctx.fillText("LEADERBOARD", 14, 100);
+    $("decoy").style.display = "";
+  } else $("decoy").style.display = "none";
+  if (worm.visible) drawWorm(now);
+  while (hitTimes.length && now - hitTimes[0] > 5000) hitTimes.shift();
+  const rate = hitTimes.length / 5;
+  if (rate > best && hits > 10) best = rate;
+  $("hits").textContent = hits; $("miss").textContent = miss;
+  $("rate").textContent = rate.toFixed(1); $("best").textContent = best.toFixed(1);
+  requestAnimationFrame(frame);
+}
+place();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

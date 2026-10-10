@@ -1,0 +1,44 @@
+{
+  "hotkey_toggle": "F6",
+  "hotkey_stop": "F7",
+  "hotkey_calibrate": "F8",
+  "capture_area": "window",
+  "capture_backend": "auto",
+  "require_focus": true,
+  "dry_run": false,
+  "debug_view": false,
+  "idle_sleep_ms": 2.0,
+  "detector": {
+    "hue_ranges": [
+      [
+        140,
+        179
+      ],
+      [
+        0,
+        10
+      ]
+    ],
+    "min_saturation": 60,
+    "min_value": 70,
+    "light_min_saturation": 25,
+    "light_min_value": 160,
+    "eye_max_saturation": 70,
+    "eye_min_value": 180,
+    "pupil_max_value": 80,
+    "min_area": 120,
+    "max_area": 60000,
+    "expected_area": 0.0,
+    "confidence_threshold": 0.58,
+    "downscale": 2,
+    "max_candidates": 12
+  },
+  "tracker": {
+    "stale_timeout_ms": 250.0,
+    "lost_timeout_ms": 300.0,
+    "stable_frames": 1,
+    "max_cps": 0.0,
+    "blacklist_after": 4,
+    "blacklist_ttl_s": 15.0
+  }
+}

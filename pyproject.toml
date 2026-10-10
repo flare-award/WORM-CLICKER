@@ -1,0 +1,18 @@
+[project]
+name = "wormclicker"
+dynamic = ["version"]
+description = "Computer-vision auto clicker for the pink pixel worm browser game"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]

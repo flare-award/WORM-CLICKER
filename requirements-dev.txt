@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest>=8,<10
+ruff>=0.5
+pyinstaller>=6.3,<7; sys_platform == "win32"
